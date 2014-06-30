@@ -1,4 +1,5 @@
 var net = require('net');
+var dns = require('dns');
 
 var proxyConf = {
     port: 443,
@@ -118,42 +119,44 @@ var proxy = net.createServer(function(client) {
             if (!serverConnecting) {
                 var host = get_sni(sendBuf);
                 if (host === null) {
-                    client.end();
+                    client.destroy();
                     console.log('Client did not send valid HTTPS header with SNI');
                     return;
                 }
                 if (host === false) { // no enough data, wait for next chunk
                     return;
                 }
-                if (host === "www.openssl.org") {
-                    client.end();
-                    console.log('Blocked site ' + host + ' hit!');
-                    return;
-                }
 
                 serverConnecting = true;
-                server = net.connect({host: host, port: 443}, function() {
-                    console.log('Server ' + host + ' connected');
-                    serverConnected = true;
-                    if (sendBuf)
-                        server.write(sendBuf);
-                    if (!clientConnected)
-                        server.end();
-                });
-                server.on('data', function(chunk) {
-                    if (clientConnected)
-                        client.write(chunk);
-                    else
-                        server.end();
-                });
-                server.on('close', function(had_error) {
-                    console.log('Server closed ' + (had_error ? 'unexpectedly' : 'normally'));
-                    if (clientConnected)
-                        client.end();
-                    serverConnected = false;
-                });
-                server.on('error', function(err) {
-                    console.log('Server error: ' + err);
+                dns.resolve4(host, function(err, addresses) {
+                    if (err || addresses.length < 1) {
+                        console.log('Failed to resolve ' + host);
+                        client.destroy();
+                        return;
+                    }
+                    server = net.connect({host: addresses[0], port: 443}, function() {
+                        console.log('Server ' + host + ' connected');
+                        serverConnected = true;
+                        if (sendBuf)
+                            server.write(sendBuf);
+                        if (!clientConnected)
+                            server.destroy();
+                    });
+                    server.on('data', function(chunk) {
+                        if (clientConnected)
+                            client.write(chunk);
+                        else
+                            server.destroy();
+                    });
+                    server.on('close', function(had_error) {
+                        console.log('Server closed ' + (had_error ? 'unexpectedly' : 'normally'));
+                        if (clientConnected)
+                            client.destroy();
+                        serverConnected = false;
+                    });
+                    server.on('error', function(err) {
+                        console.log('Server error: ' + err);
+                    });
                 });
             }
         }
@@ -163,7 +166,7 @@ var proxy = net.createServer(function(client) {
         if (serverConnected) {
             if (sendBuf)
                 server.write(sendBuf);
-            server.end();
+            server.destroy();
         }
         clientConnected = false;
     });

@@ -1,4 +1,5 @@
 var net = require('net');
+var dns = require('dns');
 
 var proxyConf = {
     port: 80,
@@ -22,41 +23,48 @@ var proxy = net.createServer(function(client) {
                 var host_matches = sendBuf.match(/\r\nHost:(.*)\r\n/i);
                 if (!host_matches) {
                     if (/\r\n\r\n/.test(sendBuf)) {
-                        client.end();
+                        client.destroy();
                         console.log('Client did not send Host in HTTP header');
                     }
                     return;
                 }
                 var host = host_matches[1].trim();
                 if (host == "") {
-                    client.end();
+                    client.destroy();
                     console.log('Invalid Host in HTTP header');
                     return;
                 }
 
                 serverConnecting = true;
-                server = net.connect({host: host, port: 80}, function() {
-                    console.log('Server ' + host + ' connected');
-                    serverConnected = true;
-                    if (sendBuf)
-                        server.write(sendBuf);
-                    if (!clientConnected)
-                        server.end();
-                });
-                server.on('data', function(chunk) {
-                    if (clientConnected)
-                        client.write(chunk);
-                    else
-                        server.end();
-                });
-                server.on('close', function(had_error) {
-                    console.log('Server closed ' + (had_error ? 'unexpectedly' : 'normally'));
-                    if (clientConnected)
-                        client.end();
-                    serverConnected = false;
-                });
-                server.on('error', function(err) {
-                    console.log('Server error: ' + err);
+                dns.resolve4(host, function(err, addresses) {
+                    if (err || addresses.length < 1) {
+                        console.log('Failed to resolve ' + host);
+                        client.destroy();
+                        return;
+                    }
+                    server = net.connect({host: host, port: 80}, function() {
+                        console.log('Server ' + host + ' connected');
+                        serverConnected = true;
+                        if (sendBuf)
+                            server.write(sendBuf);
+                        if (!clientConnected)
+                            server.destroy();
+                    });
+                    server.on('data', function(chunk) {
+                        if (clientConnected)
+                            client.write(chunk);
+                        else
+                            server.destroy();
+                    });
+                    server.on('close', function(had_error) {
+                        console.log('Server closed ' + (had_error ? 'unexpectedly' : 'normally'));
+                        if (clientConnected)
+                            client.destroy();
+                        serverConnected = false;
+                    });
+                    server.on('error', function(err) {
+                        console.log('Server error: ' + err);
+                    });
                 });
             }
         }
@@ -66,7 +74,7 @@ var proxy = net.createServer(function(client) {
         if (serverConnected) {
             if (sendBuf)
                 server.write(sendBuf);
-            server.end();
+            server.destroy();
         }
         clientConnected = false;
     });
