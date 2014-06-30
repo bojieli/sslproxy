@@ -2,7 +2,7 @@ var net = require('net');
 
 var proxyConf = {
     port: 443,
-    listenHost: '127.0.0.1'
+    listenHost: '0.0.0.0'
 };
 
 // input: Buffer buf
@@ -106,7 +106,6 @@ var proxy = net.createServer(function(client) {
         if (serverConnected)
             server.write(chunk);
         else {
-            console.log('hello: ' + chunk.length + ' ' + (sendBuf ? sendBuf.length : 0));
             if (sendBuf) {
                 newBuf = new Buffer(sendBuf.length + chunk.length, 'hex');
                 sendBuf.copy(newBuf);
@@ -124,6 +123,11 @@ var proxy = net.createServer(function(client) {
                     return;
                 }
                 if (host === false) { // no enough data, wait for next chunk
+                    return;
+                }
+                if (host === "www.openssl.org") {
+                    client.end();
+                    console.log('Blocked site ' + host + ' hit!');
                     return;
                 }
 
